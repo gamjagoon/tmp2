@@ -157,3 +157,63 @@ if result == kDiceResultOk:
 else:
     print("Buffer too small")
 ```
+
+```py
+import cbor2
+
+DICE_SIGNATURE_SIZE = 64  # Example signature size
+kDiceResultOk = 0
+kDiceResultBufferTooSmall = -1
+kDiceResultPlatformError = -2
+
+def encode_cose_sign1(protected_attributes, protected_attributes_size, payload, payload_size, move_payload, signature, buffer_size):
+    # Create a CBOR array with 4 elements
+    cbor_array = []
+
+    # Protected attributes.
+    cbor_array.append(protected_attributes[:protected_attributes_size])
+
+    # Empty map for unprotected attributes.
+    cbor_array.append({})
+
+    # Payload.
+    if move_payload:
+        # Allocate space for the payload
+        payload_alloc = bytearray(payload_size)
+        # Check if payload overlaps with buffer (simulating the C behavior)
+        if payload_alloc < payload:
+            return kDiceResultPlatformError, None
+        # Move the payload into place
+        payload_alloc[:] = payload[:payload_size]
+        cbor_array.append(payload_alloc)
+    else:
+        cbor_array.append(payload[:payload_size])
+
+    # Signature.
+    cbor_array.append(signature[:DICE_SIGNATURE_SIZE])
+
+    # Encode the array using cbor2
+    encoded = cbor2.dumps(cbor_array)
+
+    # Check if the encoded size exceeds the buffer size
+    if len(encoded) > buffer_size:
+        return kDiceResultBufferTooSmall, None
+
+    # Return the result and encoded data
+    return kDiceResultOk, encoded
+
+# Example usage
+protected_attributes = b'\x01\x02\x03\x04'
+protected_attributes_size = len(protected_attributes)
+payload = b'\x05\x06\x07\x08\x09\x0A\x0B\x0C\x0D\x0E\x0F'
+payload_size = len(payload)
+move_payload = False
+signature = b'\x0A' * DICE_SIGNATURE_SIZE
+buffer_size = 1024
+
+result, encoded_cose_sign1 = encode_cose_sign1(protected_attributes, protected_attributes_size, payload, payload_size, move_payload, signature, buffer_size)
+if result == kDiceResultOk:
+    print(f"Encoded COSE_Sign1: {encoded_cose_sign1.hex()}")
+else:
+    print("Buffer too small or platform error")
+```
