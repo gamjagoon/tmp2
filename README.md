@@ -1,5 +1,6 @@
 # tmp2
 
+```py
 import cbor2
 
 # Constants per RFC 8392.
@@ -105,3 +106,5 @@ if result == kDiceResultOk:
     print(f"Encoded CWT: {encoded_cwt.hex()}")
 else:
     print("Buffer too small")
+
+```
