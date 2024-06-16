@@ -1,1 +1,107 @@
 # tmp2
+
+import cbor2
+
+# Constants per RFC 8392.
+kCwtIssuerLabel = 1
+kCwtSubjectLabel = 2
+# Constants per the Open Profile for DICE specification.
+kCodeHashLabel = -4670545
+kCodeDescriptorLabel = -4670546
+kConfigHashLabel = -4670547
+kConfigDescriptorLabel = -4670548
+kAuthorityHashLabel = -4670549
+kAuthorityDescriptorLabel = -4670550
+kModeLabel = -4670551
+kSubjectPublicKeyLabel = -4670552
+kKeyUsageLabel = -4670553
+kProfileNameLabel = -4670554
+# Key usage constant per RFC 5280.
+kKeyUsageCertSign = 32
+
+DICE_HASH_SIZE = 32  # Example hash size
+DICE_INLINE_CONFIG_SIZE = 32  # Example inline config size
+DICE_PROFILE_NAME = "example_profile"  # Example profile name
+kDiceConfigTypeDescriptor = 1
+kDiceConfigTypeInline = 2
+kDiceResultOk = 0
+kDiceResultBufferTooSmall = -1
+
+def DiceHash(context, data, data_size, output_hash):
+    # Placeholder implementation of a hashing function
+    # Here we just simulate by filling output_hash with dummy data
+    output_hash[:] = bytes(DICE_HASH_SIZE)
+    return kDiceResultOk
+
+def encode_cwt(context, input_values, authority_id_hex, subject_id_hex, encoded_public_key, buffer_size):
+    map_pairs = 7
+    if input_values['code_descriptor_size'] > 0:
+        map_pairs += 1
+    if input_values['config_type'] == kDiceConfigTypeDescriptor:
+        map_pairs += 2
+    else:
+        map_pairs += 1
+    if input_values['authority_descriptor_size'] > 0:
+        map_pairs += 1
+    if DICE_PROFILE_NAME:
+        map_pairs += 1
+
+    cbor_map = {}
+    cbor_map[kCwtIssuerLabel] = authority_id_hex
+    cbor_map[kCwtSubjectLabel] = subject_id_hex
+    cbor_map[kCodeHashLabel] = input_values['code_hash']
+
+    if input_values['code_descriptor_size'] > 0:
+        cbor_map[kCodeDescriptorLabel] = input_values['code_descriptor']
+
+    if input_values['config_type'] == kDiceConfigTypeDescriptor:
+        config_descriptor_hash = bytearray(DICE_HASH_SIZE)
+        result = DiceHash(context, input_values['config_descriptor'], input_values['config_descriptor_size'], config_descriptor_hash)
+        if result != kDiceResultOk:
+            return result, None
+        cbor_map[kConfigDescriptorLabel] = input_values['config_descriptor']
+        cbor_map[kConfigHashLabel] = config_descriptor_hash
+    elif input_values['config_type'] == kDiceConfigTypeInline:
+        cbor_map[kConfigDescriptorLabel] = input_values['config_value']
+
+    cbor_map[kAuthorityHashLabel] = input_values['authority_hash']
+    if input_values['authority_descriptor_size'] > 0:
+        cbor_map[kAuthorityDescriptorLabel] = input_values['authority_descriptor']
+
+    cbor_map[kModeLabel] = bytes([input_values['mode']])
+    cbor_map[kSubjectPublicKeyLabel] = encoded_public_key
+    cbor_map[kKeyUsageLabel] = bytes([kKeyUsageCertSign])
+
+    if DICE_PROFILE_NAME:
+        cbor_map[kProfileNameLabel] = DICE_PROFILE_NAME
+
+    encoded = cbor2.dumps(cbor_map)
+    if len(encoded) > buffer_size:
+        return kDiceResultBufferTooSmall, None
+    return kDiceResultOk, encoded
+
+# Example usage
+context = None
+input_values = {
+    'code_hash': b'\x00' * DICE_HASH_SIZE,
+    'code_descriptor': b'\x01' * 10,
+    'code_descriptor_size': 10,
+    'config_type': kDiceConfigTypeDescriptor,
+    'config_descriptor': b'\x02' * 10,
+    'config_descriptor_size': 10,
+    'config_value': b'\x03' * DICE_INLINE_CONFIG_SIZE,
+    'authority_hash': b'\x04' * DICE_HASH_SIZE,
+    'authority_descriptor': b'\x05' * 10,
+    'authority_descriptor_size': 10,
+    'mode': 1
+}
+authority_id_hex = "authority_id"
+subject_id_hex = "subject_id"
+encoded_public_key = b'\x06' * 20
+buffer_size = 1024
+
+result, encoded_cwt = encode_cwt(context, input_values, authority_id_hex, subject_id_hex, encoded_public_key, buffer_size)
+if result == kDiceResultOk:
+    print(f"Encoded CWT: {encoded_cwt.hex()}")
+else:
+    print("Buffer too small")
