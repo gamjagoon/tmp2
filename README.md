@@ -108,3 +108,52 @@ else:
     print("Buffer too small")
 
 ```
+
+```py
+import cbor2
+
+kDiceResultOk = 0
+kDiceResultBufferTooSmall = -1
+
+def encode_cose_tbs(protected_attributes, protected_attributes_size, payload_size, aad, aad_size, buffer_size):
+    # Create a CBOR array with 4 elements
+    cbor_array = []
+
+    # Context string field.
+    cbor_array.append("Signature1")
+
+    # Protected attributes from COSE_Sign1.
+    cbor_array.append(protected_attributes[:protected_attributes_size])
+
+    # Additional authenticated data.
+    cbor_array.append(aad[:aad_size])
+
+    # Space for the payload, to be filled in by the caller.
+    payload = bytearray(payload_size)
+    cbor_array.append(payload)
+
+    # Encode the array using cbor2
+    encoded = cbor2.dumps(cbor_array)
+
+    # Check if the encoded size exceeds the buffer size
+    if len(encoded) > buffer_size:
+        return kDiceResultBufferTooSmall, None, None
+
+    # Return the result, encoded data, and the reference to the payload
+    return kDiceResultOk, encoded, payload
+
+# Example usage
+protected_attributes = b'\x01\x02\x03\x04'
+protected_attributes_size = len(protected_attributes)
+payload_size = 16
+aad = b'\x05\x06\x07\x08'
+aad_size = len(aad)
+buffer_size = 1024
+
+result, encoded_cose_tbs, payload_ref = encode_cose_tbs(protected_attributes, protected_attributes_size, payload_size, aad, aad_size, buffer_size)
+if result == kDiceResultOk:
+    print(f"Encoded COSE TBS: {encoded_cose_tbs.hex()}")
+    print(f"Payload reference: {payload_ref.hex()}")
+else:
+    print("Buffer too small")
+```
