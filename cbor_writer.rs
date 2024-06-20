@@ -212,3 +212,17 @@ fn main() {
     println!("Encoded size: {}", encoded_size);
     println!("Buffer: {:?}", &buffer[..encoded_size]);
 }
+
+
+error[E0499]: cannot borrow `*buffer` as mutable more than once at a time
+   --> src\main.rs:195:9
+    |
+162 |     let mut cbor_out = CborOut::new(buffer);
+    |                                     ------ first mutable borrow occurs here
+...
+195 |         buffer[..*encoded_size].copy_from_slice(&cbor_out.buffer[..*encoded_size]);
+    |         ^^^^^^ second mutable borrow occurs here --------------- first borrow later used here
+
+For more information about this error, try `rustc --explain E0499`.
+warning: `cbor_write` (bin "cbor_write") generated 3 warnings
+error: could not compile `cbor_write` (bin "cbor_write") due to previous error; 3 warnings emitted
