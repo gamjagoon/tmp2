@@ -1,16 +1,19 @@
-use std::convert::TryInto;
+use std::mem::size_of;
 
-#[derive(Debug, Clone, Copy)]
-enum CborType {
-    Uint = 0,
-    Nint = 1,
-    Bstr = 2,
-    Tstr = 3,
-    Array = 4,
-    Map = 5,
-    Tag = 6,
-    Simple = 7,
-}
+const K_COSE_KEY_KTY_LABEL: i64 = 1;
+const K_COSE_KEY_ALG_LABEL: i64 = 3;
+const K_COSE_KEY_OPS_LABEL: i64 = 4;
+const K_COSE_OKP_CRV_LABEL: i64 = -1;
+const K_COSE_OKP_X_LABEL: i64 = -2;
+const K_COSE_KEY_TYPE_OKP: i64 = 1;
+const K_COSE_ALG_EDDSA: i64 = 6; // Placeholder for DICE_COSE_KEY_ALG_VALUE
+const K_COSE_KEY_OPS_VERIFY: i64 = 2;
+const K_COSE_CRV_ED25519: i64 = 6;
+const DICE_PUBLIC_KEY_SIZE: usize = 32; // Placeholder for the size of the public key
+
+// Result codes
+const K_DICE_RESULT_OK: i32 = 0;
+const K_DICE_RESULT_BUFFER_TOO_SMALL: i32 = 1;
 
 struct CborOut<'a> {
     buffer: &'a mut [u8],
@@ -19,135 +22,7 @@ struct CborOut<'a> {
 
 impl<'a> CborOut<'a> {
     fn new(buffer: &'a mut [u8]) -> Self {
-        Self { buffer, cursor: 0 }
-    }
-
-    fn would_overflow(&self, size: usize) -> bool {
-        size > self.buffer.len().saturating_sub(self.cursor)
-    }
-
-    fn fits_in_buffer(&self, size: usize) -> bool {
-        self.cursor <= self.buffer.len() && size <= self.buffer.len().saturating_sub(self.cursor)
-    }
-
-    fn write_type(&mut self, cbor_type: CborType, val: u64) {
-        let size = match val {
-            0..=23 => 1,
-            24..=0xff => 2,
-            0x100..=0xffff => 3,
-            0x10000..=0xffffffff => 5,
-            _ => 9,
-        };
-
-        if self.would_overflow(size) {
-            self.cursor = usize::MAX;
-            return;
-        }
-
-        if self.fits_in_buffer(size) {
-            match size {
-                1 => self.buffer[self.cursor] = (cbor_type as u8) << 5 | val as u8,
-                2 => {
-                    self.buffer[self.cursor] = (cbor_type as u8) << 5 | 24;
-                    self.buffer[self.cursor + 1] = val as u8;
-                }
-                3 => {
-                    self.buffer[self.cursor] = (cbor_type as u8) << 5 | 25;
-                    self.buffer[self.cursor + 1] = (val >> 8) as u8;
-                    self.buffer[self.cursor + 2] = val as u8;
-                }
-                5 => {
-                    self.buffer[self.cursor] = (cbor_type as u8) << 5 | 26;
-                    self.buffer[self.cursor + 1] = (val >> 24) as u8;
-                    self.buffer[self.cursor + 2] = (val >> 16) as u8;
-                    self.buffer[self.cursor + 3] = (val >> 8) as u8;
-                    self.buffer[self.cursor + 4] = val as u8;
-                }
-                9 => {
-                    self.buffer[self.cursor] = (cbor_type as u8) << 5 | 27;
-                    self.buffer[self.cursor + 1] = (val >> 56) as u8;
-                    self.buffer[self.cursor + 2] = (val >> 48) as u8;
-                    self.buffer[self.cursor + 3] = (val >> 40) as u8;
-                    self.buffer[self.cursor + 4] = (val >> 32) as u8;
-                    self.buffer[self.cursor + 5] = (val >> 24) as u8;
-                    self.buffer[self.cursor + 6] = (val >> 16) as u8;
-                    self.buffer[self.cursor + 7] = (val >> 8) as u8;
-                    self.buffer[self.cursor + 8] = val as u8;
-                }
-                _ => {}
-            }
-        }
-
-        self.cursor += size;
-    }
-
-    fn alloc_str(&mut self, cbor_type: CborType, data_size: usize) -> Option<&mut [u8]> {
-        self.write_type(cbor_type, data_size as u64);
-        if self.would_overflow(data_size) || !self.fits_in_buffer(data_size) {
-            None
-        } else {
-            let start = self.cursor;
-            self.cursor += data_size;
-            Some(&mut self.buffer[start..self.cursor])
-        }
-    }
-
-    fn write_str(&mut self, cbor_type: CborType, data: &[u8]) {
-        if let Some(ptr) = self.alloc_str(cbor_type, data.len()) {
-            ptr.copy_from_slice(data);
-        }
-    }
-
-    fn write_int(&mut self, val: i64) {
-        if val < 0 {
-            self.write_type(CborType::Nint, (-1 - val) as u64);
-        } else {
-            self.write_type(CborType::Uint, val as u64);
-        }
-    }
-
-    fn write_uint(&mut self, val: u64) {
-        self.write_type(CborType::Uint, val);
-    }
-
-    fn write_bstr(&mut self, data: &[u8]) {
-        self.write_str(CborType::Bstr, data);
-    }
-
-    fn alloc_bstr(&mut self, data_size: usize) -> Option<&mut [u8]> {
-        self.alloc_str(CborType::Bstr, data_size)
-    }
-
-    fn write_tstr(&mut self, data: &str) {
-        self.write_str(CborType::Tstr, data.as_bytes());
-    }
-
-    fn alloc_tstr(&mut self, size: usize) -> Option<&mut [u8]> {
-        self.alloc_str(CborType::Tstr, size)
-    }
-
-    fn write_array(&mut self, num_elements: usize) {
-        self.write_type(CborType::Array, num_elements as u64);
-    }
-
-    fn write_map(&mut self, num_pairs: usize) {
-        self.write_type(CborType::Map, num_pairs as u64);
-    }
-
-    fn write_tag(&mut self, tag: u64) {
-        self.write_type(CborType::Tag, tag);
-    }
-
-    fn write_false(&mut self) {
-        self.write_type(CborType::Simple, 20);
-    }
-
-    fn write_true(&mut self) {
-        self.write_type(CborType::Simple, 21);
-    }
-
-    fn write_null(&mut self) {
-        self.write_type(CborType::Simple, 22);
+        CborOut { buffer, cursor: 0 }
     }
 
     fn size(&self) -> usize {
@@ -157,20 +32,183 @@ impl<'a> CborOut<'a> {
     fn overflowed(&self) -> bool {
         self.cursor == usize::MAX || self.cursor > self.buffer.len()
     }
+
+    fn write_type(&mut self, type_: u8, val: u64) {
+        let size = if val <= 23 {
+            1
+        } else if val <= 0xff {
+            2
+        } else if val <= 0xffff {
+            3
+        } else if val <= 0xffffffff {
+            5
+        } else {
+            9
+        };
+
+        if self.cursor + size > self.buffer.len() {
+            self.cursor = usize::MAX;
+            return;
+        }
+
+        if size == 1 {
+            self.buffer[self.cursor] = (type_ << 5) | (val as u8);
+        } else if size == 2 {
+            self.buffer[self.cursor..self.cursor+2].copy_from_slice(&[
+                (type_ << 5) | 24,
+                val as u8,
+            ]);
+        } else if size == 3 {
+            self.buffer[self.cursor..self.cursor+3].copy_from_slice(&[
+                (type_ << 5) | 25,
+                (val >> 8) as u8,
+                val as u8,
+            ]);
+        } else if size == 5 {
+            self.buffer[self.cursor..self.cursor+5].copy_from_slice(&[
+                (type_ << 5) | 26,
+                (val >> 24) as u8,
+                (val >> 16) as u8,
+                (val >> 8) as u8,
+                val as u8,
+            ]);
+        } else if size == 9 {
+            self.buffer[self.cursor..self.cursor+9].copy_from_slice(&[
+                (type_ << 5) | 27,
+                (val >> 56) as u8,
+                (val >> 48) as u8,
+                (val >> 40) as u8,
+                (val >> 32) as u8,
+                (val >> 24) as u8,
+                (val >> 16) as u8,
+                (val >> 8) as u8,
+                val as u8,
+            ]);
+        }
+
+        self.cursor += size;
+    }
+
+    fn alloc_str(&mut self, type_: u8, data_size: usize) -> Option<&mut [u8]> {
+        self.write_type(type_, data_size as u64);
+        if self.cursor == usize::MAX || self.cursor + data_size > self.buffer.len() {
+            None
+        } else {
+            let start = self.cursor;
+            self.cursor += data_size;
+            Some(&mut self.buffer[start..start + data_size])
+        }
+    }
+
+    fn write_str(&mut self, type_: u8, data: &[u8]) {
+        if let Some(ptr) = self.alloc_str(type_, data.len()) {
+            ptr.copy_from_slice(data);
+        }
+    }
+
+    fn write_int(&mut self, val: i64) {
+        if val < 0 {
+            self.write_type(1, (-1 - val) as u64);
+        } else {
+            self.write_type(0, val as u64);
+        }
+    }
+
+    fn write_uint(&mut self, val: u64) {
+        self.write_type(0, val);
+    }
+
+    fn write_bstr(&mut self, data: &[u8]) {
+        self.write_str(2, data);
+    }
+
+    fn write_tstr(&mut self, string: &str) {
+        self.write_str(3, string.as_bytes());
+    }
+
+    fn write_array(&mut self, num_elements: usize) {
+        self.write_type(4, num_elements as u64);
+    }
+
+    fn write_map(&mut self, num_pairs: usize) {
+        self.write_type(5, num_pairs as u64);
+    }
+
+    fn write_tag(&mut self, tag: u64) {
+        self.write_type(6, tag);
+    }
+
+    fn write_false(&mut self) {
+        self.write_type(7, 20);
+    }
+
+    fn write_true(&mut self) {
+        self.write_type(7, 21);
+    }
+
+    fn write_null(&mut self) {
+        self.write_type(7, 22);
+    }
+}
+
+fn dice_cose_encode_public_key(
+    context_not_used: *mut u8,
+    public_key: &[u8; DICE_PUBLIC_KEY_SIZE],
+    buffer_size: usize,
+    buffer: &mut [u8],
+    encoded_size: &mut usize,
+) -> i32 {
+    // Initialize CBOR output
+    let mut cbor_out = CborOut::new(buffer);
+
+    // Add the map with 5 pairs
+    cbor_out.write_map(5);
+
+    // Add the key type
+    cbor_out.write_int(K_COSE_KEY_KTY_LABEL);
+    cbor_out.write_int(K_COSE_KEY_TYPE_OKP);
+
+    // Add the algorithm
+    cbor_out.write_int(K_COSE_KEY_ALG_LABEL);
+    cbor_out.write_int(K_COSE_ALG_EDDSA);
+
+    // Add the KeyOps
+    cbor_out.write_int(K_COSE_KEY_OPS_LABEL);
+    cbor_out.write_array(1);
+    cbor_out.write_int(K_COSE_KEY_OPS_VERIFY);
+
+    // Add the curve
+    cbor_out.write_int(K_COSE_OKP_CRV_LABEL);
+    cbor_out.write_int(K_COSE_CRV_ED25519);
+
+    // Add the public key
+    cbor_out.write_int(K_COSE_OKP_X_LABEL);
+    cbor_out.write_bstr(public_key);
+
+    // Set the encoded size
+    *encoded_size = cbor_out.size();
+
+    // Check for overflow
+    if cbor_out.overflowed() {
+        return K_DICE_RESULT_BUFFER_TOO_SMALL;
+    } else {
+        buffer[..*encoded_size].copy_from_slice(&cbor_out.buffer[..*encoded_size]);
+        return K_DICE_RESULT_OK;
+    }
 }
 
 fn main() {
-    let mut buffer = vec![0u8; 1024];
-    let mut cbor_out = CborOut::new(&mut buffer);
+    let public_key: [u8; DICE_PUBLIC_KEY_SIZE] = [0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08,
+                                                  0x09, 0x0A, 0x0B, 0x0C, 0x0D, 0x0E, 0x0F, 0x10,
+                                                  0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17, 0x18,
+                                                  0x19, 0x1A, 0x1B, 0x1C, 0x1D, 0x1E, 0x1F, 0x20];
+    let buffer_size = 128;
+    let mut buffer = vec![0u8; buffer_size];
+    let mut encoded_size = 0;
 
-    cbor_out.write_int(42);
-    cbor_out.write_int(-42);
-    cbor_out.write_tstr("Hello, CBOR!");
-    cbor_out.write_array(2);
-    cbor_out.write_uint(12345);
-    cbor_out.write_false();
+    let result = dice_cose_encode_public_key(std::ptr::null_mut(), &public_key, buffer_size, &mut buffer, &mut encoded_size);
 
-    println!("CBOR Output Size: {}", cbor_out.size());
-    println!("CBOR Overflowed: {}", cbor_out.overflowed());
-    println!("CBOR Output: {:?}", &buffer[..cbor_out.size()]);
+    println!("Result: {}", result);
+    println!("Encoded size: {}", encoded_size);
+    println!("Buffer: {:?}", &buffer[..encoded_size]);
 }
