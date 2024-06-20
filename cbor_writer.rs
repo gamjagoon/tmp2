@@ -15,14 +15,17 @@ const DICE_PUBLIC_KEY_SIZE: usize = 32; // Placeholder for the size of the publi
 const K_DICE_RESULT_OK: i32 = 0;
 const K_DICE_RESULT_BUFFER_TOO_SMALL: i32 = 1;
 
-struct CborOut<'a> {
-    buffer: &'a mut [u8],
+struct CborOut {
+    buffer: Vec<u8>,
     cursor: usize,
 }
 
-impl<'a> CborOut<'a> {
-    fn new(buffer: &'a mut [u8]) -> Self {
-        CborOut { buffer, cursor: 0 }
+impl CborOut {
+    fn new(buffer_size: usize) -> Self {
+        CborOut {
+            buffer: vec![0u8; buffer_size],
+            cursor: 0,
+        }
     }
 
     fn size(&self) -> usize {
@@ -54,18 +57,18 @@ impl<'a> CborOut<'a> {
         if size == 1 {
             self.buffer[self.cursor] = (type_ << 5) | (val as u8);
         } else if size == 2 {
-            self.buffer[self.cursor..self.cursor+2].copy_from_slice(&[
+            self.buffer[self.cursor..self.cursor + 2].copy_from_slice(&[
                 (type_ << 5) | 24,
                 val as u8,
             ]);
         } else if size == 3 {
-            self.buffer[self.cursor..self.cursor+3].copy_from_slice(&[
+            self.buffer[self.cursor..self.cursor + 3].copy_from_slice(&[
                 (type_ << 5) | 25,
                 (val >> 8) as u8,
                 val as u8,
             ]);
         } else if size == 5 {
-            self.buffer[self.cursor..self.cursor+5].copy_from_slice(&[
+            self.buffer[self.cursor..self.cursor + 5].copy_from_slice(&[
                 (type_ << 5) | 26,
                 (val >> 24) as u8,
                 (val >> 16) as u8,
@@ -73,7 +76,7 @@ impl<'a> CborOut<'a> {
                 val as u8,
             ]);
         } else if size == 9 {
-            self.buffer[self.cursor..self.cursor+9].copy_from_slice(&[
+            self.buffer[self.cursor..self.cursor + 9].copy_from_slice(&[
                 (type_ << 5) | 27,
                 (val >> 56) as u8,
                 (val >> 48) as u8,
@@ -159,7 +162,7 @@ fn dice_cose_encode_public_key(
     encoded_size: &mut usize,
 ) -> i32 {
     // Initialize CBOR output
-    let mut cbor_out = CborOut::new(buffer);
+    let mut cbor_out = CborOut::new(buffer_size);
 
     // Add the map with 5 pairs
     cbor_out.write_map(5);
@@ -212,17 +215,3 @@ fn main() {
     println!("Encoded size: {}", encoded_size);
     println!("Buffer: {:?}", &buffer[..encoded_size]);
 }
-
-
-error[E0499]: cannot borrow `*buffer` as mutable more than once at a time
-   --> src\main.rs:195:9
-    |
-162 |     let mut cbor_out = CborOut::new(buffer);
-    |                                     ------ first mutable borrow occurs here
-...
-195 |         buffer[..*encoded_size].copy_from_slice(&cbor_out.buffer[..*encoded_size]);
-    |         ^^^^^^ second mutable borrow occurs here --------------- first borrow later used here
-
-For more information about this error, try `rustc --explain E0499`.
-warning: `cbor_write` (bin "cbor_write") generated 3 warnings
-error: could not compile `cbor_write` (bin "cbor_write") due to previous error; 3 warnings emitted
