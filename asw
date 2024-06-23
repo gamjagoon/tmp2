@@ -214,11 +214,11 @@ fn encode_cose_tbs(
         enc.bytes(&[]).unwrap();
     }
 
-    let payload_start = enc.into_writer().len();
+    let payload_start = enc.as_ref().len();
     // Allocate space for the payload
     enc.bytes(&vec![0u8; payload_size]).unwrap();
 
-    let tbs_size = enc.into_writer().len();
+    let tbs_size = enc.as_ref().len();
     Ok((payload_start, tbs_size))
 }
 
@@ -325,22 +325,3 @@ fn main() {
         }
     }
 }
-error[E0382]: borrow of moved value: `enc`
-   --> src\main.rs:219:5
-    |
-205 |     let mut enc = Encoder::new(buffer);
-    |         ------- move occurs because `enc` has type `Encoder<&mut [u8]>`, which does not implement the `Copy` trait       
-...
-217 |     let payload_start = enc.into_writer().len();
-    |                             ------------- `enc` moved due to this method call
-218 |     // Allocate space for the payload
-219 |     enc.bytes(&vec![0u8; payload_size]).unwrap();
-    |     ^^^ value borrowed here after move
-    |
-note: `Encoder::<W>::into_writer` takes ownership of the receiver `self`, which moves `enc`
-   --> C:\Users\mingjae.kim\.cargo\registry\src\repo.samsungds.net-9d74bca2622d2197\minicbor-0.24.1\src\encode\encoder.rs:26:24
-    |
-26  |     pub fn into_writer(self) -> W {
-    |                        ^^^^
-
-For more information about this error, try `rustc --explain E0382`.
