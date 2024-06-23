@@ -1,6 +1,8 @@
-use minicbor::{Encoder, encode, data::Type};
-use minicbor::bytes::ByteVec;
+use minicbor::Encoder;
+use ed25519_dalek::{Signature, Signer, Verifier, VerifyingKey};
+use minicbor::bytes::{ByteArray, ByteSlice};
 use std::convert::TryFrom;
+use hex;
 
 const DICE_HASH_SIZE: usize = 64;
 const DICE_HIDDEN_SIZE: usize = 64;
@@ -127,8 +129,14 @@ fn encode_cwt(
 }
 
 fn sign(data: &[u8], private_key: &[u8]) -> [u8; DICE_SIGNATURE_SIZE] {
-    // Placeholder function for signing, replace with actual implementation
-    [0u8; DICE_SIGNATURE_SIZE]
+    let array: &[u8; 32] = private_key.try_into().unwrap();
+    let signing_key = ed25519_dalek::SigningKey::from_bytes(array);
+
+    let signature = signing_key.sign(data);
+
+    assert!(signing_key.verify(data, &signature).is_ok());
+
+    signature.to_bytes()
 }
 
 fn encode_cose_sign1(
