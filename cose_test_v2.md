@@ -74,25 +74,33 @@ def EncodeCwt(input_values, authority_id_hex, subject_id_hex, encoded_public_key
         -4670553: 32,  # key usage
     }
 
+    print(f"Initial cwt_map: {cwt_map}")
+
     # If provided, add code descriptor
     if input_values["code_descriptor_size"] > 0:
         cwt_map[-4670546] = input_values["code_descriptor"]
+        print(f"Added code descriptor: {cwt_map}")
 
     # Add config inputs
     if input_values["config_type"] == DiceConfigType.Descriptor:
         config_hash = hashlib.sha512(input_values["config_descriptor"]).digest()
         cwt_map[-4670548] = input_values["config_descriptor"]
         cwt_map[-4670547] = config_hash
+        print(f"Added config descriptor and hash: {cwt_map}")
     else:
         cwt_map[-4670548] = input_values["config_value"]
+        print(f"Added inline config: {cwt_map}")
 
     # Add authority descriptor if present
     if input_values["authority_descriptor_size"] > 0:
         cwt_map[-4670550] = input_values["authority_descriptor"]
+        print(f"Added authority descriptor: {cwt_map}")
 
     if DICE_PROFILE_NAME:
         cwt_map[-4670554] = DICE_PROFILE_NAME
+        print(f"Added profile name: {cwt_map}")
 
+    print(f"Final cwt_map: {cwt_map}")
     return cbor2.dumps(cwt_map)
 
 
