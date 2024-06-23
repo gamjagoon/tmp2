@@ -203,23 +203,30 @@ fn encode_cose_tbs(
     buffer: &mut [u8],
 ) -> Result<(usize, usize), DiceResult> {
     let mut enc = Encoder::new(buffer);
+    let mut current_len = 0;
 
-    enc.array(4).unwrap()
-        .str("Signature1").unwrap()
-        .bytes(protected_attributes).unwrap();
+    enc.array(4).unwrap();
+    current_len += enc.into_writer().len();
+
+    enc.str("Signature1").unwrap();
+    current_len += enc.into_writer().len();
+
+    enc.bytes(protected_attributes).unwrap();
+    current_len += enc.into_writer().len();
 
     if let Some(aad) = aad {
         enc.bytes(aad).unwrap();
     } else {
         enc.bytes(&[]).unwrap();
     }
+    current_len += enc.into_writer().len();
 
-    let payload_start = enc.into_writer().len();
+    let payload_start = current_len;
     // Allocate space for the payload
     enc.bytes(&vec![0u8; payload_size]).unwrap();
+    current_len += payload_size;
 
-    let tbs_size = enc.into_writer().len();
-    Ok((payload_start, tbs_size))
+    Ok((payload_start, current_len))
 }
 
 fn dice_generate_certificate(
@@ -280,12 +287,13 @@ fn dice_generate_certificate(
     // Sign the now-complete TBS
     let signature = dice::ed25519_sign(&certificate_buffer[..tbs_size], &authority_private_key);
 
+    let (first_half, second_half) = certificate_buffer.split_at_mut(payload_start);
     // Produce the complete COSE_Sign1, including the signature
     let certificate_size = encode_cose_sign1(
         &protected_attributes,
-        &certificate_buffer[payload_start..payload_start + final_cwt_size],
+        &second_half[..final_cwt_size],
         &signature,
-        certificate_buffer,
+        first_half,
     )?;
 
     Ok(certificate_size)
@@ -322,41 +330,3 @@ fn main() {
         }
     }
 }
-
-error[E0382]: borrow of moved value: `enc`
-   --> src\main.rs:219:5
-    |
-205 |     let mut enc = Encoder::new(buffer);
-    |         ------- move occurs because `enc` has type `Encoder<&mut [u8]>`, which does not implement the `Copy` trait       
-...
-217 |     let payload_start = enc.into_writer().len();
-    |                             ------------- `enc` moved due to this method call
-218 |     // Allocate space for the payload
-219 |     enc.bytes(&vec![0u8; payload_size]).unwrap();
-    |     ^^^ value borrowed here after move
-    |
-note: `Encoder::<W>::into_writer` takes ownership of the receiver `self`, which moves `enc`
-   --> C:\Users\mingjae.kim\.cargo\registry\src\repo.samsungds.net-9d74bca2622d2197\minicbor-0.24.1\src\encode\encoder.rs:26:24
-    |
-26  |     pub fn into_writer(self) -> W {
-    |                        ^^^^
-
-error[E0502]: cannot borrow `*certificate_buffer` as mutable because it is also borrowed as immutable
-   --> src\main.rs:284:28
-    |
-284 |       let certificate_size = encode_cose_sign1(
-    |                              ^----------------
-    |                              |
-    |  ____________________________immutable borrow later used by call
-    | |
-285 | |         &protected_attributes,
-286 | |         &certificate_buffer[payload_start..payload_start + final_cwt_size],
-    | |          ------------------ immutable borrow occurs here
-287 | |         &signature,
-288 | |         certificate_buffer,
-289 | |     )?;
-    | |_____^ mutable borrow occurs here
-
-Some errors have detailed explanations: E0382, E0502.
-For more information about an error, try `rustc --explain E0382`.
-error: could not compile `cose_cbor` (bin "cose_cbor") due to 2 previous errors
