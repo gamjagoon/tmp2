@@ -179,55 +179,6 @@ static DiceResult EncodeCoseSign1(const uint8_t* protected_attributes,
   return kDiceResultOk;
 }
 
-DiceResult DiceCoseSignAndEncodeSign1(
-    void* context, const uint8_t* payload, size_t payload_size,
-    const uint8_t* aad, size_t aad_size,
-    const uint8_t private_key[DICE_PRIVATE_KEY_SIZE], size_t buffer_size,
-    uint8_t* buffer, size_t* encoded_size) {
-  DiceResult result;
-
-  *encoded_size = 0;
-  uint8_t protected_attributes[DICE_MAX_PROTECTED_ATTRIBUTES_SIZE];
-  size_t protected_attributes_size = 0;
-  result = EncodeProtectedAttributes(sizeof(protected_attributes),
-                                     protected_attributes,
-                                     &protected_attributes_size);
-  if (result != kDiceResultOk) {
-    return kDiceResultPlatformError;
-  }
-
-  // Construct a To-Be-Signed (TBS) structure based on the relevant fields of
-  // the COSE_Sign1.
-  uint8_t* payload_buffer;
-  result = EncodeCoseTbs(protected_attributes, protected_attributes_size,
-                         payload_size, aad, aad_size, buffer_size, buffer,
-                         &payload_buffer, encoded_size);
-  if (result != kDiceResultOk) {
-    // Check how big the buffer needs to be in total.
-    size_t final_encoded_size = 0;
-    EncodeCoseSign1(protected_attributes, protected_attributes_size, payload,
-                    payload_size, /*move_payload=*/false, /*signature=*/NULL,
-                    /*buffer_size=*/0, /*buffer=*/NULL, &final_encoded_size);
-    if (*encoded_size < final_encoded_size) {
-      *encoded_size = final_encoded_size;
-    }
-    return result;
-  }
-  memcpy(payload_buffer, payload, payload_size);
-
-  // Sign the TBS with the authority key.
-  uint8_t signature[DICE_SIGNATURE_SIZE];
-  result = DiceSign(context, buffer, *encoded_size, private_key, signature);
-  if (result != kDiceResultOk) {
-    return result;
-  }
-
-  // The final certificate is an untagged COSE_Sign1 structure.
-  return EncodeCoseSign1(protected_attributes, protected_attributes_size,
-                         payload, payload_size, /*move_payload=*/false,
-                         signature, buffer_size, buffer, encoded_size);
-}
-
 // Encodes a CBOR Web Token (CWT) with an issuer, subject, and additional
 // fields.
 static DiceResult EncodeCwt(void* context, const DiceInputValues* input_values,
