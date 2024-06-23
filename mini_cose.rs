@@ -174,7 +174,8 @@ fn encode_cose_tbs(
     }
 
     let payload_start = enc.into_writer().len();
-    enc.bytes_len(payload_size).unwrap();
+    // Allocate space for the payload
+    enc.bytes(&vec![0u8; payload_size]).unwrap();
 
     let tbs_size = enc.into_writer().len();
     Ok((payload_start, tbs_size))
