@@ -325,3 +325,33 @@ fn main() {
         }
     }
 }
+
+
+error[E0599]: no method named `bytes_written` found for struct `Encoder` in the current scope
+  --> src\main.rs:90:12
+   |
+90 |     Ok(enc.bytes_written())
+   |            ^^^^^^^^^^^^^ method not found in `Encoder<&mut [u8]>`
+
+error[E0599]: no method named `bytes_written` found for struct `Encoder` in the current scope
+   --> src\main.rs:104:12
+    |
+104 |     Ok(enc.bytes_written())
+    |            ^^^^^^^^^^^^^ method not found in `Encoder<&mut [u8]>`
+
+error[E0282]: type annotations needed                                                  
+   --> src\main.rs:249:5
+    |
+249 |     cose_encode_public_key(&mut encoded_public_key, &subject_public_key).unwr... 
+    |     ^^^^^^^^^^^^^^^^^^^^^^ cannot infer type of the type parameter `E` declared on the function `cose_encode_public_key`
+    |
+help: consider specifying the generic argument
+    |
+249 |     cose_encode_public_key::<E>(&mut encoded_public_key, &subject_public_key).unwrap();
+    |                           +++++
+
+Some errors have detailed explanations: E0282, E0599.
+For more information about an error, try `rustc --explain E0282`.
+error: could not compile `cose_cbor` (bin "cose_cbor") due to 3 previous errors
+
+실행하는데 위 에러가 발생하는데 문제를 해결해줘
