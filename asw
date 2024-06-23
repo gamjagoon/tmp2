@@ -325,3 +325,17 @@ fn main() {
         }
     }
 }
+error[E0599]: no method named `as_ref` found for struct `Encoder` in the current scope
+   --> src\main.rs:217:29
+    |
+217 |     let payload_start = enc.as_ref().len();
+    |                             ^^^^^^ method not found in `Encoder<&mut [u8]>`
+
+error[E0599]: no method named `as_ref` found for struct `Encoder` in the current scope
+   --> src\main.rs:221:24
+    |
+221 |     let tbs_size = enc.as_ref().len();
+    |                        ^^^^^^ method not found in `Encoder<&mut [u8]>`
+
+For more information about this error, try `rustc --explain E0599`.
+error: could not compile `cose_cbor` (bin "cose_cbor") due to 2 previous errors
