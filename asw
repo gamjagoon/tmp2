@@ -1,0 +1,74 @@
+use minicbor::Encoder;
+use minicbor::encode::Error;
+use minicbor::data::{Int, ByteString};
+
+const DICE_PUBLIC_KEY_SIZE: usize = 32;
+const DICE_COSE_KEY_ALG_VALUE: i64 = /* appropriate value here */;
+
+const kCoseKeyKtyLabel: i64 = 1;
+const kCoseKeyTypeOkp: i64 = 1;
+const kCoseKeyAlgLabel: i64 = 3;
+const kCoseAlgEdDSA: i64 = -8;
+const kCoseKeyOpsLabel: i64 = 4;
+const kCoseKeyOpsVerify: i64 = 2;
+const kCoseOkpCrvLabel: i64 = -1;
+const kCoseCrvEd25519: i64 = 6;
+const kCoseOkpXLabel: i64 = -2;
+
+fn encode_key(buffer: &mut [u8], public_key: &[u8; DICE_PUBLIC_KEY_SIZE]) -> Result<usize, Error> {
+    let mut enc = Encoder::new(buffer);
+
+    enc.map(1)?;
+
+    // Add the key type
+    enc.int(kCoseKeyKtyLabel)?;
+    enc.int(kCoseKeyTypeOkp)?;
+
+    // Add the algorithm
+    enc.int(kCoseKeyAlgLabel)?;
+    enc.int(kCoseAlgEdDSA)?;
+
+    // Add the KeyOps
+    enc.int(kCoseKeyOpsLabel)?;
+    enc.array(1)?;
+    enc.int(kCoseKeyOpsVerify)?;
+
+    // Add the curve
+    enc.int(kCoseOkpCrvLabel)?;
+    enc.int(kCoseCrvEd25519)?;
+
+    // Add the public key
+    enc.int(kCoseOkpXLabel)?;
+    enc.bytes(public_key)?;
+
+    Ok(enc.bytes_written())
+}
+
+fn encode_protected_attributes(buffer: &mut [u8]) -> Result<usize, Error> {
+    let mut enc = Encoder::new(buffer);
+
+    enc.map(1)?;
+
+    // Constants per RFC 8152
+    let kCoseHeaderAlgLabel = 1;
+
+    enc.int(kCoseHeaderAlgLabel)?;
+    enc.int(DICE_COSE_KEY_ALG_VALUE)?;
+
+    Ok(enc.bytes_written())
+}
+
+fn main() {
+    let mut buffer = [0u8; 1024];
+    let public_key: [u8; DICE_PUBLIC_KEY_SIZE] = [0u8; DICE_PUBLIC_KEY_SIZE]; // Replace with actual public key
+
+    match encode_key(&mut buffer, &public_key) {
+        Ok(encoded_size) => println!("Encoded key size: {}", encoded_size),
+        Err(e) => println!("Failed to encode key: {}", e),
+    }
+
+    match encode_protected_attributes(&mut buffer) {
+        Ok(encoded_size) => println!("Encoded protected attributes size: {}", encoded_size),
+        Err(e) => println!("Failed to encode protected attributes: {}", e),
+    }
+}
