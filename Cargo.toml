@@ -1,0 +1,15 @@
+[package]
+name = "cose_cbor"
+version = "0.1.0"
+edition = "2021"
+publish = ["artifactory"]
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+ed25519-dalek = { version = "2.1.1", registry = "artifactory" }
+hex = { version = "0.4.3", registry = "artifactory" }
+hkdf = { version = "0.12.4", registry = "artifactory" }
+minicbor = { version = "0.24.1", registry = "artifactory" }
+sha2 = { version = "0.10.8", registry = "artifactory" }
+hex-literal = { version = "0.4.1", registry = "artifactory" }
