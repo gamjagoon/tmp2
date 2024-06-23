@@ -61,47 +61,47 @@ enum DiceResult {
     PlatformError,
 }
 
-fn cose_encode_public_key<E>(buffer: &mut [u8], public_key: &[u8; DICE_PUBLIC_KEY_SIZE]) -> Result<usize, Error<E>> {
+fn cose_encode_public_key(buffer: &mut [u8], public_key: &[u8; DICE_PUBLIC_KEY_SIZE]) -> Result<usize, Error<()>> {
     let mut enc = Encoder::new(buffer);
 
-    enc.map(1).unwrap();
+    enc.map(1)?;
 
     // Add the key type
-    enc.i64(K_COSE_KEY_KTY_LABEL).unwrap();
-    enc.i64(K_COSE_KEY_TYPE_OKP).unwrap();
+    enc.i64(K_COSE_KEY_KTY_LABEL)?;
+    enc.i64(K_COSE_KEY_TYPE_OKP)?;
 
     // Add the algorithm
-    enc.i64(K_COSE_KEY_ALG_LABEL).unwrap();
-    enc.i64(K_COSE_ALG_ED_DSA).unwrap();
+    enc.i64(K_COSE_KEY_ALG_LABEL)?;
+    enc.i64(K_COSE_ALG_ED_DSA)?;
 
     // Add the KeyOps
-    enc.i64(K_COSE_KEY_OPS_LABEL).unwrap();
-    enc.array(1).unwrap();
-    enc.i64(K_COSE_KEY_OPS_VERIFY).unwrap();
+    enc.i64(K_COSE_KEY_OPS_LABEL)?;
+    enc.array(1)?;
+    enc.i64(K_COSE_KEY_OPS_VERIFY)?;
 
     // Add the curve
-    enc.i64(K_COSE_OKP_CRV_LABEL).unwrap();
-    enc.i64(K_COSE_CRV_ED25519).unwrap();
+    enc.i64(K_COSE_OKP_CRV_LABEL)?;
+    enc.i64(K_COSE_CRV_ED25519)?;
 
     // Add the public key
-    enc.i64(K_COSE_OKP_XLABEL).unwrap();
-    enc.bytes(public_key).unwrap();
+    enc.i64(K_COSE_OKP_XLABEL)?;
+    enc.bytes(public_key)?;
 
-    Ok(enc.bytes_written())
+    Ok(enc.into_writer().len())
 }
 
-fn encode_protected_attributes<E>(buffer: &mut [u8]) -> Result<usize, Error<E>> {
+fn encode_protected_attributes(buffer: &mut [u8]) -> Result<usize, Error<()>> {
     let mut enc = Encoder::new(buffer);
 
-    enc.map(1).unwrap();
+    enc.map(1)?;
 
     // Constants per RFC 8152
     let k_cose_header_alg_label = 1;
 
-    enc.i64(k_cose_header_alg_label).unwrap();
-    enc.i64(DICE_COSE_KEY_ALG_VALUE).unwrap();
+    enc.i64(k_cose_header_alg_label)?;
+    enc.i64(DICE_COSE_KEY_ALG_VALUE)?;
 
-    Ok(enc.bytes_written())
+    Ok(enc.into_writer().len())
 }
 
 fn encode_cwt(
@@ -127,8 +127,7 @@ fn encode_cwt(
 
     let mut enc = Encoder::new(buffer);
 
-    enc.map(7)
-        .unwrap()
+    enc.map(7).unwrap()
         .i64(CWT_ISSUER_LABEL).unwrap()
         .str(authority_id_hex).unwrap()
         .i64(CWT_SUBJECT_LABEL).unwrap()
@@ -180,7 +179,6 @@ fn encode_cwt(
 
     Ok(enc.into_writer().len())
 }
-
 
 fn encode_cose_sign1(
     protected_attributes: &[u8],
@@ -325,33 +323,3 @@ fn main() {
         }
     }
 }
-
-
-error[E0599]: no method named `bytes_written` found for struct `Encoder` in the current scope
-  --> src\main.rs:90:12
-   |
-90 |     Ok(enc.bytes_written())
-   |            ^^^^^^^^^^^^^ method not found in `Encoder<&mut [u8]>`
-
-error[E0599]: no method named `bytes_written` found for struct `Encoder` in the current scope
-   --> src\main.rs:104:12
-    |
-104 |     Ok(enc.bytes_written())
-    |            ^^^^^^^^^^^^^ method not found in `Encoder<&mut [u8]>`
-
-error[E0282]: type annotations needed                                                  
-   --> src\main.rs:249:5
-    |
-249 |     cose_encode_public_key(&mut encoded_public_key, &subject_public_key).unwr... 
-    |     ^^^^^^^^^^^^^^^^^^^^^^ cannot infer type of the type parameter `E` declared on the function `cose_encode_public_key`
-    |
-help: consider specifying the generic argument
-    |
-249 |     cose_encode_public_key::<E>(&mut encoded_public_key, &subject_public_key).unwrap();
-    |                           +++++
-
-Some errors have detailed explanations: E0282, E0599.
-For more information about an error, try `rustc --explain E0282`.
-error: could not compile `cose_cbor` (bin "cose_cbor") due to 3 previous errors
-
-실행하는데 위 에러가 발생하는데 문제를 해결해줘
