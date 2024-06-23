@@ -196,12 +196,12 @@ fn encode_cose_sign1(
     Ok(enc.into_writer().len())
 }
 
-fn encode_cose_tbs(
+fn encode_cose_tbs<'a>(
     protected_attributes: &[u8],
     payload_size: usize,
     aad: Option<&[u8]>,
-    buffer: &mut [u8],
-    payload: &mut &mut [u8],
+    buffer: &'a mut [u8],
+    payload: &mut &'a mut [u8],
     encoded_size: &mut usize
 ) -> Result<DiceResult, DiceResult> {
     let mut enc = Encoder::new(buffer);
@@ -220,12 +220,13 @@ fn encode_cose_tbs(
     }
 
     // Allocate space for the payload
-    *payload = &mut buffer[enc.writer().len()..enc.writer().len() + payload_size];
+    let payload_start = enc.writer().len();
+    *payload = &mut buffer[payload_start..payload_start + payload_size];
     for byte in &mut payload[..payload_size] {
         *byte = 0;
     }
 
-    *encoded_size = enc.writer().len() + payload_size;
+    *encoded_size = payload_start + payload_size;
 
     if *encoded_size > buffer.len() {
         return Err(DiceResult::BufferTooSmall);
@@ -341,54 +342,3 @@ fn main() {
         }
     }
 }
-error: lifetime may not live long enough
-   --> src\main.rs:223:5
-    |
-203 |     buffer: &mut [u8],
-    |             - let's call the lifetime of this reference `'1`
-204 |     payload: &mut &mut [u8],
-    |                   - let's call the lifetime of this reference `'2`
-...
-223 |     *payload = &mut buffer[enc.writer().len()..enc.writer().len() + payload_size];
-    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ assignment requires that `'1` must outlive `'2`
-    |
-help: consider introducing a named lifetime parameter
-    |
-199 ~ fn encode_cose_tbs<'a>(
-200 |     protected_attributes: &[u8],
-201 |     payload_size: usize,
-202 |     aad: Option<&[u8]>,
-203 ~     buffer: &'a mut [u8],
-204 ~     payload: &mut &'a mut [u8],
-    |
-
-error[E0382]: borrow of moved value: `buffer`
-   --> src\main.rs:223:21
-    |
-203 |     buffer: &mut [u8],
-    |     ------ move occurs because `buffer` has type `&mut [u8]`, which does not implement the `Copy` trait
-...
-207 |     let mut enc = Encoder::new(buffer);
-    |                                ------ value moved here
-...
-223 |     *payload = &mut buffer[enc.writer().len()..enc.writer().len() + payload_size];
-    |                     ^^^^^^ value borrowed here after move
-
-error[E0502]: cannot borrow `*buffer` as immutable because it is also borrowed as mutable
-   --> src\main.rs:230:24
-    |
-204 |     payload: &mut &mut [u8],
-    |                   - let's call the lifetime of this reference `'2`
-...
-223 |     *payload = &mut buffer[enc.writer().len()..enc.writer().len() + payload_size];
-    |     -----------------------------------------------------------------------------
-    |     |               |
-    |     |               mutable borrow occurs here
-    |     assignment requires that `*buffer` is borrowed for `'2`
-...
-230 |     if *encoded_size > buffer.len() {
-    |                        ^^^^^^ immutable borrow occurs here
-
-Some errors have detailed explanations: E0382, E0502.
-For more information about an error, try `rustc --explain E0382`.
-error: could not compile `cose_cbor` (bin "cose_cbor") due to 3 previous errors
