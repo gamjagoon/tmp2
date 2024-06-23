@@ -1,7 +1,6 @@
 mod dice;
 use minicbor::Encoder;
 use hex;
-use minicbor::encode::Error;
 
 const DICE_HASH_SIZE: usize = 64;
 const DICE_HIDDEN_SIZE: usize = 64;
@@ -61,45 +60,45 @@ enum DiceResult {
     PlatformError,
 }
 
-fn cose_encode_public_key(buffer: &mut [u8], public_key: &[u8; DICE_PUBLIC_KEY_SIZE]) -> Result<usize, Error<()>> {
+fn cose_encode_public_key(buffer: &mut [u8], public_key: &[u8; DICE_PUBLIC_KEY_SIZE]) -> Result<usize, DiceResult> {
     let mut enc = Encoder::new(buffer);
 
-    enc.map(1)?;
+    enc.map(1).unwrap();
 
     // Add the key type
-    enc.i64(K_COSE_KEY_KTY_LABEL)?;
-    enc.i64(K_COSE_KEY_TYPE_OKP)?;
+    enc.i64(K_COSE_KEY_KTY_LABEL).unwrap();
+    enc.i64(K_COSE_KEY_TYPE_OKP).unwrap();
 
     // Add the algorithm
-    enc.i64(K_COSE_KEY_ALG_LABEL)?;
-    enc.i64(K_COSE_ALG_ED_DSA)?;
+    enc.i64(K_COSE_KEY_ALG_LABEL).unwrap();
+    enc.i64(K_COSE_ALG_ED_DSA).unwrap();
 
     // Add the KeyOps
-    enc.i64(K_COSE_KEY_OPS_LABEL)?;
-    enc.array(1)?;
-    enc.i64(K_COSE_KEY_OPS_VERIFY)?;
+    enc.i64(K_COSE_KEY_OPS_LABEL).unwrap();
+    enc.array(1).unwrap();
+    enc.i64(K_COSE_KEY_OPS_VERIFY).unwrap();
 
     // Add the curve
-    enc.i64(K_COSE_OKP_CRV_LABEL)?;
-    enc.i64(K_COSE_CRV_ED25519)?;
+    enc.i64(K_COSE_OKP_CRV_LABEL).unwrap();
+    enc.i64(K_COSE_CRV_ED25519).unwrap();
 
     // Add the public key
-    enc.i64(K_COSE_OKP_XLABEL)?;
-    enc.bytes(public_key)?;
+    enc.i64(K_COSE_OKP_XLABEL).unwrap();
+    enc.bytes(public_key).unwrap();
 
     Ok(enc.into_writer().len())
 }
 
-fn encode_protected_attributes(buffer: &mut [u8]) -> Result<usize, Error<()>> {
+fn encode_protected_attributes(buffer: &mut [u8]) -> Result<usize, DiceResult> {
     let mut enc = Encoder::new(buffer);
 
-    enc.map(1)?;
+    enc.map(1).unwrap();
 
     // Constants per RFC 8152
     let k_cose_header_alg_label = 1;
 
-    enc.i64(k_cose_header_alg_label)?;
-    enc.i64(DICE_COSE_KEY_ALG_VALUE)?;
+    enc.i64(k_cose_header_alg_label).unwrap();
+    enc.i64(DICE_COSE_KEY_ALG_VALUE).unwrap();
 
     Ok(enc.into_writer().len())
 }
@@ -230,7 +229,7 @@ fn dice_generate_certificate(
     certificate_buffer: &mut [u8],
 ) -> Result<usize, DiceResult> {
     // Placeholder for actual key derivation and signing logic
-    let (subject_private_key, subject_public_key): ([u8; 32], [u8; 32]) = dice::asyn_kdf(next_cdi_attest);
+    let (_, subject_public_key): ([u8; 32], [u8; 32]) = dice::asyn_kdf(next_cdi_attest);
     let (authority_private_key, authority_public_key): ([u8; 32], [u8; 32]) = dice::asyn_kdf(current_cdi_attest);
 
     // Placeholder for actual CDI derivation logic
@@ -323,3 +322,41 @@ fn main() {
         }
     }
 }
+
+error[E0382]: borrow of moved value: `enc`
+   --> src\main.rs:219:5
+    |
+205 |     let mut enc = Encoder::new(buffer);
+    |         ------- move occurs because `enc` has type `Encoder<&mut [u8]>`, which does not implement the `Copy` trait       
+...
+217 |     let payload_start = enc.into_writer().len();
+    |                             ------------- `enc` moved due to this method call
+218 |     // Allocate space for the payload
+219 |     enc.bytes(&vec![0u8; payload_size]).unwrap();
+    |     ^^^ value borrowed here after move
+    |
+note: `Encoder::<W>::into_writer` takes ownership of the receiver `self`, which moves `enc`
+   --> C:\Users\mingjae.kim\.cargo\registry\src\repo.samsungds.net-9d74bca2622d2197\minicbor-0.24.1\src\encode\encoder.rs:26:24
+    |
+26  |     pub fn into_writer(self) -> W {
+    |                        ^^^^
+
+error[E0502]: cannot borrow `*certificate_buffer` as mutable because it is also borrowed as immutable
+   --> src\main.rs:284:28
+    |
+284 |       let certificate_size = encode_cose_sign1(
+    |                              ^----------------
+    |                              |
+    |  ____________________________immutable borrow later used by call
+    | |
+285 | |         &protected_attributes,
+286 | |         &certificate_buffer[payload_start..payload_start + final_cwt_size],
+    | |          ------------------ immutable borrow occurs here
+287 | |         &signature,
+288 | |         certificate_buffer,
+289 | |     )?;
+    | |_____^ mutable borrow occurs here
+
+Some errors have detailed explanations: E0382, E0502.
+For more information about an error, try `rustc --explain E0382`.
+error: could not compile `cose_cbor` (bin "cose_cbor") due to 2 previous errors
