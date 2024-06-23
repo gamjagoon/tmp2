@@ -201,25 +201,37 @@ fn encode_cose_tbs(
     payload_size: usize,
     aad: Option<&[u8]>,
     buffer: &mut [u8],
-) -> Result<(usize, usize), DiceResult> {
+    payload: &mut &mut [u8],
+    encoded_size: &mut usize
+) -> Result<DiceResult, DiceResult> {
     let mut enc = Encoder::new(buffer);
 
+    // TBS is an array of four elements
     enc.array(4).unwrap();
+    // Context string field
     enc.str("Signature1").unwrap();
+    // Protected attributes from COSE_Sign1
     enc.bytes(protected_attributes).unwrap();
-
+    // Additional authenticated data
     if let Some(aad) = aad {
         enc.bytes(aad).unwrap();
     } else {
         enc.bytes(&[]).unwrap();
     }
 
-    let payload_start = enc.writer().len();
     // Allocate space for the payload
-    enc.bytes(&vec![0u8; payload_size]).unwrap();
+    *payload = &mut buffer[enc.writer().len()..enc.writer().len() + payload_size];
+    for byte in &mut payload[..payload_size] {
+        *byte = 0;
+    }
 
-    let tbs_size = enc.writer().len();
-    Ok((payload_start, tbs_size))
+    *encoded_size = enc.writer().len() + payload_size;
+
+    if *encoded_size > buffer.len() {
+        return Err(DiceResult::BufferTooSmall);
+    }
+
+    Ok(DiceResult::Ok)
 }
 
 fn dice_generate_certificate(
@@ -257,11 +269,15 @@ fn dice_generate_certificate(
     )?;
 
     // Find out how big the TBS will be
-    let (payload_start, tbs_size) = encode_cose_tbs(
+    let mut payload: &mut [u8] = &mut [];
+    let mut encoded_size = 0;
+    encode_cose_tbs(
         &protected_attributes,
         cwt_size,
         None,
         certificate_buffer,
+        &mut payload,
+        &mut encoded_size
     )?;
 
     // Now we can encode the payload directly into the allocated BSTR in the TBS
@@ -270,7 +286,7 @@ fn dice_generate_certificate(
         &authority_id_hex,
         &subject_id_hex,
         &encoded_public_key,
-        &mut certificate_buffer[payload_start..],
+        payload,
     )?;
 
     if final_cwt_size != cwt_size {
@@ -278,11 +294,11 @@ fn dice_generate_certificate(
     }
 
     // Sign the now-complete TBS
-    let signature = dice::ed25519_sign(&certificate_buffer[..tbs_size], &authority_private_key);
+    let signature = dice::ed25519_sign(&certificate_buffer[..encoded_size - cwt_size], &authority_private_key);
 
     // Produce the complete COSE_Sign1, including the signature
     let certificate_size = {
-        let (first_half, second_half) = certificate_buffer.split_at_mut(payload_start);
+        let (first_half, second_half) = certificate_buffer.split_at_mut(encoded_size - cwt_size);
         encode_cose_sign1(
             &protected_attributes,
             &second_half[..final_cwt_size],
@@ -325,52 +341,3 @@ fn main() {
         }
     }
 }
-
-thread 'main' panicked at src\main.rs:137:32:
-called `Result::unwrap()` on an `Err` value: Error { err: Write(EndOfSlice(())), msg: "" }
-stack backtrace:
-   0: rust_begin_unwind
-             at /rustc/cc66ad468955717ab92600c770da8c1601a4ff33/library\std\src/panicking.rs:595:5 
-   1: core::panicking::panic_fmt
-             at /rustc/cc66ad468955717ab92600c770da8c1601a4ff33/library\core\src/panicking.rs:67:14
-   2: core::result::unwrap_failed
-             at /rustc/cc66ad468955717ab92600c770da8c1601a4ff33/library\core\src/result.rs:1652:5  
-   3: core::result::Result<T,E>::unwrap
-             at /rustc/cc66ad468955717ab92600c770da8c1601a4ff33\library\core\src/result.rs:1077:23 
-   4: cose_cbor::encode_cwt
-             at .\src\main.rs:135:5
-   5: cose_cbor::dice_generate_certificate
-             at .\src\main.rs:275:26
-   6: cose_cbor::main
-             at .\src\main.rs:321:11
-   7: core::ops::function::FnOnce::call_once
-             at /rustc/cc66ad468955717ab92600c770da8c1601a4ff33\library\core\src\ops/function.rs:250:5
-note: Some details are omitted, run with `RUST_BACKTRACE=full` for a verbose backtrace.
-
-encode_cose_tbs함수가 잘못된거 같아 아래의 c함수와 똑같이 동작하도록 수정해줘 
-```c
-static DiceResult EncodeCoseTbs(const uint8_t* protected_attributes,
-                                size_t protected_attributes_size,
-                                size_t payload_size, const uint8_t* aad,
-                                size_t aad_size, size_t buffer_size,
-                                uint8_t* buffer, uint8_t** payload,
-                                size_t* encoded_size) {
-  struct CborOut out;
-  CborOutInit(buffer, buffer_size, &out);
-  // TBS is an array of four elements.
-  CborWriteArray(/*num_elements=*/4, &out);
-  // Context string field.
-  CborWriteTstr("Signature1", &out);
-  // Protected attributes from COSE_Sign1.
-  CborWriteBstr(protected_attributes_size, protected_attributes, &out);
-  // Additional authenticated data.
-  CborWriteBstr(aad_size, aad, &out);
-  // Space for the payload, to be filled in by the caller.
-  *payload = CborAllocBstr(payload_size, &out);
-  *encoded_size = CborOutSize(&out);
-  if (CborOutOverflowed(&out)) {
-    return kDiceResultBufferTooSmall;
-  }
-  return kDiceResultOk;
-}
-```
