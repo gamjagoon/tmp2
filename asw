@@ -342,3 +342,33 @@ fn main() {
         }
     }
 }
+error[E0382]: borrow of moved value: `buffer`
+   --> src\main.rs:224:21
+    |
+203 |     buffer: &'a mut [u8],
+    |     ------ move occurs because `buffer` has type `&mut [u8]`, which does not implement the `Copy` trait
+...
+207 |     let mut enc = Encoder::new(buffer);
+    |                                ------ value moved here
+...
+224 |     *payload = &mut buffer[payload_start..payload_start + payload_size];
+    |                     ^^^^^^ value borrowed here after move
+
+error[E0502]: cannot borrow `*buffer` as immutable because it is also borrowed as mutable
+   --> src\main.rs:231:24
+    |
+199 | fn encode_cose_tbs<'a>(
+    |                    -- lifetime `'a` defined here
+...
+224 |     *payload = &mut buffer[payload_start..payload_start + payload_size];
+    |     -------------------------------------------------------------------
+    |     |               |
+    |     |               mutable borrow occurs here
+    |     assignment requires that `*buffer` is borrowed for `'a`
+...
+231 |     if *encoded_size > buffer.len() {
+    |                        ^^^^^^ immutable borrow occurs here
+
+Some errors have detailed explanations: E0382, E0502.
+For more information about an error, try `rustc --explain E0382`.
+error: could not compile `cose_cbor` (bin "cose_cbor") due to 2 previous errors
