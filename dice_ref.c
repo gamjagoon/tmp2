@@ -1,4 +1,137 @@
+```py
+# Constants per RFC 8152
+kCoseKeyKtyLabel = 1
+kCoseKeyAlgLabel = 3
+kCoseKeyOpsLabel = 4
+kCoseOkpCrvLabel = -1
+kCoseOkpXLabel = -2
+kCoseKeyTypeOkp = 1
+kCoseAlgEdDSA = 6  # DICE_COSE_KEY_ALG_VALUE placeholder
+kCoseKeyOpsVerify = 2
+kCoseCrvEd25519 = 6
+DICE_PUBLIC_KEY_SIZE = 32  # Placeholder for the size of the public key
 
+# Result codes
+kDiceResultOk = 0
+kDiceResultBufferTooSmall = 1
+
+
+class CborOut:
+    def __init__(self, buffer_size):
+        self.buffer = bytearray(buffer_size)
+        self.buffer_size = buffer_size
+        self.cursor = 0
+
+    def CborOutSize(self):
+        return self.cursor
+
+    def CborOutOverflowed(self):
+        return self.cursor == -1 or self.cursor > self.buffer_size
+
+    def CborWriteWouldOverflowCursor(self, size):
+        return size > 0xFFFFFFFFFFFFFFFF - self.cursor
+
+    def CborWriteFitsInBuffer(self, size):
+        return (
+            self.cursor <= self.buffer_size and size <= self.buffer_size - self.cursor
+        )
+
+    def CborWriteType(self, type, val):
+        if val <= 23:
+            size = 1
+        elif val <= 0xFF:
+            size = 2
+        elif val <= 0xFFFF:
+            size = 3
+        elif val <= 0xFFFFFFFF:
+            size = 5
+        else:
+            size = 9
+
+        if self.CborWriteWouldOverflowCursor(size):
+            self.cursor = -1
+            return
+
+        if self.CborWriteFitsInBuffer(size):
+            if size == 1:
+                self.buffer[self.cursor] = (type << 5) | val
+            elif size == 2:
+                self.buffer[self.cursor : self.cursor + 2] = struct.pack(
+                    "BB", (type << 5) | 24, val
+                )
+            elif size == 3:
+                self.buffer[self.cursor : self.cursor + 3] = struct.pack(
+                    "!BH", (type << 5) | 25, val
+                )
+            elif size == 5:
+                self.buffer[self.cursor : self.cursor + 5] = struct.pack(
+                    "!BI", (type << 5) | 26, val
+                )
+            elif size == 9:
+                self.buffer[self.cursor : self.cursor + 9] = struct.pack(
+                    "!BQ", (type << 5) | 27, val
+                )
+
+        self.cursor += size
+
+    def CborAllocStr(self, type, data_size):
+        self.CborWriteType(type, data_size)
+        if self.CborWriteWouldOverflowCursor(
+            data_size
+        ) or not self.CborWriteFitsInBuffer(data_size):
+            return None
+        ptr = self.cursor
+        self.cursor += data_size
+        return ptr
+
+    def CborWriteStr(self, type, data_size, data):
+        print(data)
+        ptr = self.CborAllocStr(type, data_size)
+        if ptr is not None and data_size:
+            self.buffer[ptr : ptr + data_size] = data
+
+    def CborWriteInt(self, val):
+        if val < 0:
+            self.CborWriteType(1, -1 - val)
+        else:
+            self.CborWriteType(0, val)
+
+    def CborWriteUint(self, val):
+        self.CborWriteType(0, val)
+
+    def CborWriteBstr(self, data):
+        self.CborWriteStr(2, len(data), data)
+
+    def CborAllocBstr(self, data_size):
+        return self.CborAllocStr(2, data_size)
+
+    def CborWriteTstr(self, string):
+        data = string.encode("utf-8")
+        self.CborWriteStr(3, len(data), data)
+
+    def CborAllocTstr(self, size):
+        return self.CborAllocStr(3, size)
+
+    def CborWriteArray(self, num_elements):
+        self.CborWriteType(4, num_elements)
+
+    def CborWriteMap(self, num_pairs):
+        self.CborWriteType(5, num_pairs)
+
+    def CborWriteTag(self, tag):
+        self.CborWriteType(6, tag)
+
+    def CborWriteFalse(self):
+        self.CborWriteType(7, 20)
+
+    def CborWriteTrue(self):
+        self.CborWriteType(7, 21)
+
+    def CborWriteNull(self):
+        self.CborWriteType(7, 22)
+```
+
+```c
 #define DICE_CDI_SIZE 32
 #define DICE_HASH_SIZE 64
 #define DICE_HIDDEN_SIZE 64
@@ -14,189 +147,6 @@
 #define DICE_PRIVATE_KEY_SIZE 64
 #define DICE_SIGNATURE_SIZE 64
 #define DICE_PROFILE_NAME NULL
-struct CborOut {
-  uint8_t* buffer;
-  size_t buffer_size;
-  size_t cursor;
-};
-
-// Initializes an output stream for writing CBOR tokens.
-static inline void CborOutInit(uint8_t* buffer, size_t buffer_size,
-                               struct CborOut* out) {
-  out->buffer = buffer;
-  out->buffer_size = buffer_size;
-  out->cursor = 0;
-}
-
-// Returns the number of bytes of encoded data. If |CborOutOverflowed()|
-// returns false, this number of bytes have been written, otherwise, this is the
-// number of bytes that that would have been written had there been space.
-static inline size_t CborOutSize(const struct CborOut* out) {
-  return out->cursor;
-}
-
-// Returns whether the |out| buffer contains the encoded tokens written to it or
-// whether the encoded tokens did not fit and the contents of the buffer should
-// be considered invalid.
-static inline bool CborOutOverflowed(const struct CborOut* out) {
-  return out->cursor == SIZE_MAX || out->cursor > out->buffer_size;
-}
-enum CborType {
-  CBOR_TYPE_UINT = 0,
-  CBOR_TYPE_NINT = 1,
-  CBOR_TYPE_BSTR = 2,
-  CBOR_TYPE_TSTR = 3,
-  CBOR_TYPE_ARRAY = 4,
-  CBOR_TYPE_MAP = 5,
-  CBOR_TYPE_TAG = 6,
-  CBOR_TYPE_SIMPLE = 7,
-};
-
-static bool CborWriteWouldOverflowCursor(size_t size, struct CborOut* out) {
-  return size > SIZE_MAX - out->cursor;
-}
-
-static bool CborWriteFitsInBuffer(size_t size, struct CborOut* out) {
-  return out->cursor <= out->buffer_size &&
-         size <= out->buffer_size - out->cursor;
-}
-
-static void CborWriteType(enum CborType type, uint64_t val,
-                          struct CborOut* out) {
-  size_t size;
-  if (val <= 23) {
-    size = 1;
-  } else if (val <= 0xff) {
-    size = 2;
-  } else if (val <= 0xffff) {
-    size = 3;
-  } else if (val <= 0xffffffff) {
-    size = 5;
-  } else {
-    size = 9;
-  }
-  if (CborWriteWouldOverflowCursor(size, out)) {
-    out->cursor = SIZE_MAX;
-    return;
-  }
-  if (CborWriteFitsInBuffer(size, out)) {
-    if (size == 1) {
-      out->buffer[out->cursor] = (type << 5) | val;
-    } else if (size == 2) {
-      out->buffer[out->cursor] = (type << 5) | 24;
-      out->buffer[out->cursor + 1] = val & 0xff;
-    } else if (size == 3) {
-      out->buffer[out->cursor] = (type << 5) | 25;
-      out->buffer[out->cursor + 1] = (val >> 8) & 0xff;
-      out->buffer[out->cursor + 2] = val & 0xff;
-    } else if (size == 5) {
-      out->buffer[out->cursor] = (type << 5) | 26;
-      out->buffer[out->cursor + 1] = (val >> 24) & 0xff;
-      out->buffer[out->cursor + 2] = (val >> 16) & 0xff;
-      out->buffer[out->cursor + 3] = (val >> 8) & 0xff;
-      out->buffer[out->cursor + 4] = val & 0xff;
-    } else if (size == 9) {
-      out->buffer[out->cursor] = (type << 5) | 27;
-      out->buffer[out->cursor + 1] = (val >> 56) & 0xff;
-      out->buffer[out->cursor + 2] = (val >> 48) & 0xff;
-      out->buffer[out->cursor + 3] = (val >> 40) & 0xff;
-      out->buffer[out->cursor + 4] = (val >> 32) & 0xff;
-      out->buffer[out->cursor + 5] = (val >> 24) & 0xff;
-      out->buffer[out->cursor + 6] = (val >> 16) & 0xff;
-      out->buffer[out->cursor + 7] = (val >> 8) & 0xff;
-      out->buffer[out->cursor + 8] = val & 0xff;
-    }
-  }
-  out->cursor += size;
-}
-
-static void* CborAllocStr(enum CborType type, size_t data_size,
-                          struct CborOut* out) {
-  CborWriteType(type, data_size, out);
-  bool overflow = CborWriteWouldOverflowCursor(data_size, out);
-  bool fit = CborWriteFitsInBuffer(data_size, out);
-  void* ptr = (overflow || !fit) ? NULL : &out->buffer[out->cursor];
-  out->cursor = overflow ? SIZE_MAX : out->cursor + data_size;
-  return ptr;
-}
-
-static void CborWriteStr(enum CborType type, size_t data_size, const void* data,
-                         struct CborOut* out) {
-  uint8_t* ptr = CborAllocStr(type, data_size, out);
-  if (ptr && data_size) {
-    memcpy(ptr, data, data_size);
-  }
-}
-
-void CborWriteInt(int64_t val, struct CborOut* out) {
-  if (val < 0) {
-    CborWriteType(CBOR_TYPE_NINT, (-1 - val), out);
-  } else {
-    CborWriteType(CBOR_TYPE_UINT, val, out);
-  }
-}
-
-void CborWriteUint(uint64_t val, struct CborOut* out) {
-  CborWriteType(CBOR_TYPE_UINT, val, out);
-}
-
-void CborWriteBstr(size_t data_size, const uint8_t* data, struct CborOut* out) {
-  CborWriteStr(CBOR_TYPE_BSTR, data_size, data, out);
-}
-
-uint8_t* CborAllocBstr(size_t data_size, struct CborOut* out) {
-  return CborAllocStr(CBOR_TYPE_BSTR, data_size, out);
-}
-
-void CborWriteTstr(const char* str, struct CborOut* out) {
-  CborWriteStr(CBOR_TYPE_TSTR, strlen(str), str, out);
-}
-
-char* CborAllocTstr(size_t size, struct CborOut* out) {
-  return CborAllocStr(CBOR_TYPE_TSTR, size, out);
-}
-
-void CborWriteArray(size_t num_elements, struct CborOut* out) {
-  CborWriteType(CBOR_TYPE_ARRAY, num_elements, out);
-}
-
-void CborWriteMap(size_t num_pairs, struct CborOut* out) {
-  CborWriteType(CBOR_TYPE_MAP, num_pairs, out);
-}
-
-void CborWriteTag(uint64_t tag, struct CborOut* out) {
-  CborWriteType(CBOR_TYPE_TAG, tag, out);
-}
-
-void CborWriteFalse(struct CborOut* out) {
-  CborWriteType(CBOR_TYPE_SIMPLE, /*val=*/20, out);
-}
-
-void CborWriteTrue(struct CborOut* out) {
-  CborWriteType(CBOR_TYPE_SIMPLE, /*val=*/21, out);
-}
-
-void CborWriteNull(struct CborOut* out) {
-  CborWriteType(CBOR_TYPE_SIMPLE, /*val=*/22, out);
-}
-typedef enum {
-  kDiceResultOk,
-  kDiceResultInvalidInput,
-  kDiceResultBufferTooSmall,
-  kDiceResultPlatformError,
-} DiceResult;
-
-typedef enum {
-  kDiceModeNotInitialized,
-  kDiceModeNormal,
-  kDiceModeDebug,
-  kDiceModeMaintenance,
-} DiceMode;
-
-typedef enum {
-  kDiceConfigTypeInline,
-  kDiceConfigTypeDescriptor,
-} DiceConfigType;
 
 typedef struct DiceInputValues_ {
   uint8_t code_hash[DICE_HASH_SIZE];
@@ -593,3 +543,4 @@ out:
 
   return result;
 }
+```
