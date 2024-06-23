@@ -203,30 +203,23 @@ fn encode_cose_tbs(
     buffer: &mut [u8],
 ) -> Result<(usize, usize), DiceResult> {
     let mut enc = Encoder::new(buffer);
-    let mut current_len = 0;
 
     enc.array(4).unwrap();
-    current_len += enc.into_writer().len();
-
     enc.str("Signature1").unwrap();
-    current_len += enc.into_writer().len();
-
     enc.bytes(protected_attributes).unwrap();
-    current_len += enc.into_writer().len();
 
     if let Some(aad) = aad {
         enc.bytes(aad).unwrap();
     } else {
         enc.bytes(&[]).unwrap();
     }
-    current_len += enc.into_writer().len();
 
-    let payload_start = current_len;
+    let payload_start = enc.into_writer().len();
     // Allocate space for the payload
     enc.bytes(&vec![0u8; payload_size]).unwrap();
-    current_len += payload_size;
 
-    Ok((payload_start, current_len))
+    let tbs_size = enc.into_writer().len();
+    Ok((payload_start, tbs_size))
 }
 
 fn dice_generate_certificate(
@@ -287,14 +280,16 @@ fn dice_generate_certificate(
     // Sign the now-complete TBS
     let signature = dice::ed25519_sign(&certificate_buffer[..tbs_size], &authority_private_key);
 
-    let (first_half, second_half) = certificate_buffer.split_at_mut(payload_start);
     // Produce the complete COSE_Sign1, including the signature
-    let certificate_size = encode_cose_sign1(
-        &protected_attributes,
-        &second_half[..final_cwt_size],
-        &signature,
-        first_half,
-    )?;
+    let certificate_size = {
+        let (first_half, second_half) = certificate_buffer.split_at_mut(payload_start);
+        encode_cose_sign1(
+            &protected_attributes,
+            &second_half[..final_cwt_size],
+            &signature,
+            first_half,
+        )?
+    };
 
     Ok(certificate_size)
 }
@@ -330,59 +325,3 @@ fn main() {
         }
     }
 }
-error[E0382]: borrow of moved value: `enc`
-   --> src\main.rs:211:5
-    |
-205 |     let mut enc = Encoder::new(buffer);
-    |         ------- move occurs because `enc` has type `Encoder<&mut [u8]>`, which does not implement the `Copy` trait       
-...
-209 |     current_len += enc.into_writer().len();
-    |                        ------------- `enc` moved due to this method call
-210 |
-211 |     enc.str("Signature1").unwrap();
-    |     ^^^ value borrowed here after move
-    |
-note: `Encoder::<W>::into_writer` takes ownership of the receiver `self`, which moves `enc`
-   --> C:\Users\mingjae.kim\.cargo\registry\src\repo.samsungds.net-9d74bca2622d2197\minicbor-0.24.1\src\encode\encoder.rs:26:24
-    |
-26  |     pub fn into_writer(self) -> W {
-    |                        ^^^^
-
-error[E0382]: borrow of moved value: `enc`
-   --> src\main.rs:214:5
-    |
-205 |     let mut enc = Encoder::new(buffer);
-    |         ------- move occurs because `enc` has type `Encoder<&mut [u8]>`, which does not implement the `Copy` trait
-...
-212 |     current_len += enc.into_writer().len();
-    |                        ------------- `enc` moved due to this method call
-213 |
-214 |     enc.bytes(protected_attributes).unwrap();
-    |     ^^^ value borrowed here after move
-
-error[E0382]: borrow of moved value: `enc`
-   --> src\main.rs:218:9
-    |
-205 |     let mut enc = Encoder::new(buffer);
-    |         ------- move occurs because `enc` has type `Encoder<&mut [u8]>`, which does not implement the `Copy` trait
-...
-215 |     current_len += enc.into_writer().len();
-    |                        ------------- `enc` moved due to this method call
-...
-218 |         enc.bytes(aad).unwrap();
-    |         ^^^ value borrowed here after move
-
-error[E0382]: borrow of moved value: `enc`
-   --> src\main.rs:226:5
-    |
-205 |     let mut enc = Encoder::new(buffer);
-    |         ------- move occurs because `enc` has type `Encoder<&mut [u8]>`, which does not implement the `Copy` trait
-...
-222 |     current_len += enc.into_writer().len();
-    |                        ------------- `enc` moved due to this method call
-...
-226 |     enc.bytes(&vec![0u8; payload_size]).unwrap();
-    |     ^^^ value borrowed here after move
-
-For more information about this error, try `rustc --explain E0382`.
-error: could not compile `cose_cbor` (bin "cose_cbor") due to 4 previous errors
