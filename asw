@@ -204,6 +204,7 @@ fn encode_cose_tbs<'a>(
     payload: &mut &'a mut [u8],
     encoded_size: &mut usize
 ) -> Result<DiceResult, DiceResult> {
+    let buffer_len = buffer.len();
     let mut enc = Encoder::new(buffer);
 
     // TBS is an array of four elements
@@ -221,7 +222,7 @@ fn encode_cose_tbs<'a>(
 
     // Allocate space for the payload
     let payload_start = enc.writer().len();
-    if payload_start + payload_size > buffer.len() {
+    if payload_start + payload_size > buffer_len {
         return Err(DiceResult::BufferTooSmall);
     }
     *payload = &mut buffer[payload_start..payload_start + payload_size];
@@ -341,17 +342,3 @@ fn main() {
         }
     }
 }
-error[E0382]: borrow of moved value: `buffer`
-   --> src\main.rs:225:39
-    |
-203 |     buffer: &'a mut [u8],
-    |     ------ move occurs because `buffer` has type `&mut [u8]`, which does not implement the `Copy` trait
-...
-207 |     let mut enc = Encoder::new(buffer);
-    |                                ------ value moved here
-...
-225 |     if payload_start + payload_size > buffer.len() {
-    |                                       ^^^^^^ value borrowed here after move
-
-For more information about this error, try `rustc --explain E0382`.
-error: could not compile `cose_cbor` (bin "cose_cbor") due to previous error
