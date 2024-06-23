@@ -1,6 +1,5 @@
-use minicbor::Encoder;
+use minicbor::{Encoder, decode, bytes::ByteSlice};
 use ed25519_dalek::{Signature, Signer, Verifier, VerifyingKey};
-use minicbor::bytes::{ByteArray, ByteSlice};
 use std::convert::TryFrom;
 use hex;
 
@@ -154,6 +153,31 @@ fn encode_cose_sign1(
         .bytes(signature).unwrap();
 
     Ok(enc.into_writer().len())
+}
+
+fn encode_cose_tbs(
+    protected_attributes: &[u8],
+    payload_size: usize,
+    aad: Option<&[u8]>,
+    buffer: &mut [u8],
+) -> Result<(usize, usize), DiceResult> {
+    let mut enc = Encoder::new(buffer);
+
+    enc.array(4).unwrap()
+        .str("Signature1").unwrap()
+        .bytes(protected_attributes).unwrap();
+
+    if let Some(aad) = aad {
+        enc.bytes(aad).unwrap();
+    } else {
+        enc.bytes(&[]).unwrap();
+    }
+
+    let payload_start = enc.into_writer().len();
+    enc.bytes_len(payload_size).unwrap();
+
+    let tbs_size = enc.into_writer().len();
+    Ok((payload_start, tbs_size))
 }
 
 fn dice_generate_certificate(
