@@ -342,3 +342,19 @@ fn main() {
         }
     }
 }
+
+   Compiling cose_cbor v0.1.0 (C:\Users\mingjae.kim\ws\cose_cbor)
+error[E0382]: borrow of moved value: `buffer`
+   --> src\main.rs:228:21
+    |
+203 |     buffer: &'a mut [u8],
+    |     ------ move occurs because `buffer` has type `&mut [u8]`, which does not implement the `Copy` trait
+...
+208 |     let mut enc = Encoder::new(buffer);
+    |                                ------ value moved here
+...
+228 |     *payload = &mut buffer[payload_start..payload_start + payload_size];
+    |                     ^^^^^^ value borrowed here after move
+
+For more information about this error, try `rustc --explain E0382`.
+error: could not compile `cose_cbor` (bin "cose_cbor") due to previous error
