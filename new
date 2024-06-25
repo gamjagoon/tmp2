@@ -1,0 +1,381 @@
+use mini_cbor::{Encoder, Decoder, data::Type};
+use std::error::Error;
+use std::fmt;
+
+const DICE_CDI_SIZE: usize = 32;
+const DICE_HASH_SIZE: usize = 64;
+const DICE_HIDDEN_SIZE: usize = 64;
+const DICE_INLINE_CONFIG_SIZE: usize = 64;
+const DICE_PRIVATE_KEY_SEED_SIZE: usize = 32;
+const DICE_ID_SIZE: usize = 20;
+const DICE_MAX_PUBLIC_KEY_SIZE: usize = DICE_PUBLIC_KEY_SIZE + 32;
+const DICE_MAX_PROTECTED_ATTRIBUTES_SIZE: usize = 16;
+const DICE_COSE_KEY_ALG_VALUE: i64 = -8;
+const DICE_PUBLIC_KEY_SIZE: usize = 32;
+const DICE_PRIVATE_KEY_SIZE: usize = 64;
+const DICE_SIGNATURE_SIZE: usize = 64;
+
+#[derive(Debug)]
+enum DiceResult {
+    Ok,
+    InvalidInput,
+    BufferTooSmall,
+    PlatformError,
+}
+
+#[derive(Debug)]
+enum DiceMode {
+    NotInitialized,
+    Normal,
+    Debug,
+    Maintenance,
+}
+
+#[derive(Debug)]
+enum DiceConfigType {
+    Inline,
+    Descriptor,
+}
+
+#[derive(Debug)]
+struct DiceInputValues {
+    code_hash: [u8; DICE_HASH_SIZE],
+    code_descriptor: Option<Vec<u8>>,
+    config_type: DiceConfigType,
+    config_value: [u8; DICE_INLINE_CONFIG_SIZE],
+    config_descriptor: Option<Vec<u8>>,
+    authority_hash: [u8; DICE_HASH_SIZE],
+    authority_descriptor: Option<Vec<u8>>,
+    mode: DiceMode,
+    hidden: [u8; DICE_HIDDEN_SIZE],
+}
+
+fn dice_hex_encode(in_bytes: &[u8], out: &mut [u8]) {
+    const HEX_MAP: &[u8] = b"0123456789abcdef";
+    let mut out_pos = 0;
+    for &byte in in_bytes {
+        if out_pos < out.len() {
+            out[out_pos] = HEX_MAP[(byte >> 4) as usize];
+            out_pos += 1;
+            if out_pos < out.len() {
+                out[out_pos] = HEX_MAP[(byte & 0x0F) as usize];
+                out_pos += 1;
+            }
+        }
+    }
+}
+
+fn dice_cose_encode_public_key(
+    public_key: &[u8; DICE_PUBLIC_KEY_SIZE],
+    buffer: &mut [u8],
+) -> Result<usize, DiceResult> {
+    // Constants per RFC 8152
+    let k_cose_key_kty_label: i64 = 1;
+    let k_cose_key_alg_label: i64 = 3;
+    let k_cose_key_ops_label: i64 = 4;
+    let k_cose_okp_crv_label: i64 = -1;
+    let k_cose_okp_x_label: i64 = -2;
+    let k_cose_key_type_okp: i64 = 1;
+    let k_cose_alg_ed_dsa: i64 = DICE_COSE_KEY_ALG_VALUE;
+    let k_cose_key_ops_verify: i64 = 2;
+    let k_cose_crv_ed25519: i64 = 6;
+
+    let mut encoder = Encoder::new(buffer);
+    encoder.map(5)?;
+
+    encoder.i64(k_cose_key_kty_label)?;
+    encoder.i64(k_cose_key_type_okp)?;
+
+    encoder.i64(k_cose_key_alg_label)?;
+    encoder.i64(k_cose_alg_ed_dsa)?;
+
+    encoder.i64(k_cose_key_ops_label)?;
+    encoder.array(1)?;
+    encoder.i64(k_cose_key_ops_verify)?;
+
+    encoder.i64(k_cose_okp_crv_label)?;
+    encoder.i64(k_cose_crv_ed25519)?;
+
+    encoder.i64(k_cose_okp_x_label)?;
+    encoder.bytes(public_key)?;
+
+    Ok(encoder.bytes_written())
+}
+
+fn encode_protected_attributes(buffer: &mut [u8]) -> Result<usize, DiceResult> {
+    // Constants per RFC 8152
+    let k_cose_header_alg_label: i64 = 1;
+
+    let mut encoder = Encoder::new(buffer);
+    encoder.map(1)?;
+    encoder.i64(k_cose_header_alg_label)?;
+    encoder.i64(DICE_COSE_KEY_ALG_VALUE)?;
+
+    Ok(encoder.bytes_written())
+}
+
+fn encode_cose_tbs(
+    protected_attributes: &[u8],
+    payload_size: usize,
+    aad: Option<&[u8]>,
+    buffer: &mut [u8],
+) -> Result<(usize, &mut [u8]), DiceResult> {
+    let mut encoder = Encoder::new(buffer);
+    encoder.array(4)?;
+
+    encoder.text("Signature1")?;
+    encoder.bytes(protected_attributes)?;
+    if let Some(aad) = aad {
+        encoder.bytes(aad)?;
+    } else {
+        encoder.bytes(&[])?;
+    }
+
+    let payload_position = encoder.bytes_written();
+    let payload_buffer = &mut buffer[payload_position..];
+    encoder.bytes_len(payload_size)?;
+
+    Ok((payload_position, payload_buffer))
+}
+
+fn encode_cose_sign1(
+    protected_attributes: &[u8],
+    payload: &[u8],
+    signature: &[u8; DICE_SIGNATURE_SIZE],
+    buffer: &mut [u8],
+) -> Result<usize, DiceResult> {
+    let mut encoder = Encoder::new(buffer);
+    encoder.array(4)?;
+
+    encoder.bytes(protected_attributes)?;
+    encoder.map(0)?;
+    encoder.bytes(payload)?;
+    encoder.bytes(signature)?;
+
+    Ok(encoder.bytes_written())
+}
+
+fn encode_cwt(
+    input_values: &DiceInputValues,
+    authority_id_hex: &str,
+    subject_id_hex: &str,
+    encoded_public_key: &[u8],
+    buffer: &mut [u8],
+) -> Result<usize, DiceResult> {
+    // Constants per RFC 8392 and Open Profile for DICE specification
+    let k_cwt_issuer_label: i64 = 1;
+    let k_cwt_subject_label: i64 = 2;
+    let k_code_hash_label: i64 = -4670545;
+    let k_code_descriptor_label: i64 = -4670546;
+    let k_config_hash_label: i64 = -4670547;
+    let k_config_descriptor_label: i64 = -4670548;
+    let k_authority_hash_label: i64 = -4670549;
+    let k_authority_descriptor_label: i64 = -4670550;
+    let k_mode_label: i64 = -4670551;
+    let k_subject_public_key_label: i64 = -4670552;
+    let k_key_usage_label: i64 = -4670553;
+    let k_profile_name_label: i64 = -4670554;
+    let k_key_usage_cert_sign: u8 = 32;
+
+    let mut map_pairs = 7;
+    if input_values.code_descriptor.is_some() {
+        map_pairs += 1;
+    }
+    match input_values.config_type {
+        DiceConfigType::Descriptor => map_pairs += 2,
+        DiceConfigType::Inline => map_pairs += 1,
+    }
+    if input_values.authority_descriptor.is_some() {
+        map_pairs += 1;
+    }
+    if let Some(profile_name) = std::option_env!("DICE_PROFILE_NAME") {
+        map_pairs += 1;
+    }
+
+    let mut encoder = Encoder::new(buffer);
+    encoder.map(map_pairs)?;
+
+    encoder.i64(k_cwt_issuer_label)?;
+    encoder.text(authority_id_hex)?;
+
+    encoder.i64(k_cwt_subject_label)?;
+    encoder.text(subject_id_hex)?;
+
+    encoder.i64(k_code_hash_label)?;
+    encoder.bytes(&input_values.code_hash)?;
+
+    if let Some(ref code_descriptor) = input_values.code_descriptor {
+        encoder.i64(k_code_descriptor_label)?;
+        encoder.bytes(code_descriptor)?;
+    }
+
+    match input_values.config_type {
+        DiceConfigType::Descriptor => {
+            encoder.i64(k_config_descriptor_label)?;
+            if let Some(ref config_descriptor) = input_values.config_descriptor {
+                encoder.bytes(config_descriptor)?;
+            }
+            let config_descriptor_hash = dice_hash(config_descriptor.unwrap());
+            encoder.i64(k_config_hash_label)?;
+            encoder.bytes(&config_descriptor_hash)?;
+        },
+        DiceConfigType::Inline => {
+            encoder.i64(k_config_descriptor_label)?;
+            encoder.bytes(&input_values.config_value)?;
+        },
+    }
+
+    encoder.i64(k_authority_hash_label)?;
+    encoder.bytes(&input_values.authority_hash)?;
+
+    if let Some(ref authority_descriptor) = input_values.authority_descriptor {
+        encoder.i64(k_authority_descriptor_label)?;
+        encoder.bytes(authority_descriptor)?;
+    }
+
+    let mode_byte = input_values.mode as u8;
+    encoder.i64(k_mode_label)?;
+    encoder.bytes(&[mode_byte])?;
+
+    encoder.i64(k_subject_public_key_label)?;
+    encoder.bytes(encoded_public_key)?;
+
+    encoder.i64(k_key_usage_label)?;
+    encoder.bytes(&[k_key_usage_cert_sign])?;
+
+    if let Some(profile_name) = std::option_env!("DICE_PROFILE_NAME") {
+        encoder.i64(k_profile_name_label)?;
+        encoder.text(profile_name)?;
+    }
+
+    Ok(encoder.bytes_written())
+}
+
+fn dice_generate_certificate(
+    context: Option<&mut ()>,
+    subject_private_key_seed: &[u8; DICE_PRIVATE_KEY_SEED_SIZE],
+    authority_private_key_seed: &[u8; DICE_PRIVATE_KEY_SEED_SIZE],
+    input_values: &DiceInputValues,
+    certificate_buffer: &mut [u8],
+) -> Result<usize, DiceResult> {
+    if input_values.config_type != DiceConfigType::Descriptor && input_values.config_type != DiceConfigType::Inline {
+        return Err(DiceResult::InvalidInput);
+    }
+
+    let mut subject_private_key = [0u8; DICE_PRIVATE_KEY_SIZE];
+    let mut authority_private_key = [0u8; DICE_PRIVATE_KEY_SIZE];
+
+    // Derive keys and IDs from the private key seeds.
+    let subject_public_key = dice_keypair_from_seed(context, subject_private_key_seed, &mut subject_private_key)?;
+    let subject_id = dice_derive_cdi_certificate_id(context, &subject_public_key)?;
+
+    let mut subject_id_hex = [0u8; 41];
+    dice_hex_encode(&subject_id, &mut subject_id_hex);
+    subject_id_hex[40] = 0;
+
+    let authority_public_key = dice_keypair_from_seed(context, authority_private_key_seed, &mut authority_private_key)?;
+    let authority_id = dice_derive_cdi_certificate_id(context, &authority_public_key)?;
+
+    let mut authority_id_hex = [0u8; 41];
+    dice_hex_encode(&authority_id, &mut authority_id_hex);
+    authority_id_hex[40] = 0;
+
+    // The public key encoded as a COSE_Key structure is embedded in the CWT.
+    let mut encoded_public_key = [0u8; DICE_MAX_PUBLIC_KEY_SIZE];
+    let encoded_public_key_size = dice_cose_encode_public_key(&subject_public_key, &mut encoded_public_key)?;
+
+    // The encoded protected attributes are used in the TBS and the final COSE_Sign1 structure.
+    let mut protected_attributes = [0u8; DICE_MAX_PROTECTED_ATTRIBUTES_SIZE];
+    let protected_attributes_size = encode_protected_attributes(&mut protected_attributes)?;
+
+    // Find out how big the CWT will be.
+    let mut cwt_size = 0;
+    encode_cwt(input_values, &authority_id_hex, &subject_id_hex, &encoded_public_key[..encoded_public_key_size], &mut [0u8])?;
+
+    let mut cwt_buffer = vec![0u8; cwt_size];
+    encode_cwt(input_values, &authority_id_hex, &subject_id_hex, &encoded_public_key[..encoded_public_key_size], &mut cwt_buffer)?;
+
+    let tbs_size;
+    let payload;
+    {
+        let (tbs_pos, payload_buf) = encode_cose_tbs(&protected_attributes[..protected_attributes_size], cwt_buffer.len(), None, certificate_buffer)?;
+        tbs_size = tbs_pos + cwt_buffer.len();
+        payload = payload_buf;
+    }
+
+    payload.copy_from_slice(&cwt_buffer);
+
+    // Sign the now-complete TBS.
+    let mut signature = [0u8; DICE_SIGNATURE_SIZE];
+    dice_sign(context, &certificate_buffer[..tbs_size], &authority_private_key, &mut signature)?;
+
+    // Produce the complete CoseSign1, including the signature.
+    let final_size = encode_cose_sign1(&protected_attributes[..protected_attributes_size], payload, &signature, certificate_buffer)?;
+
+    Ok(final_size)
+}
+
+// Placeholder functions for operations that need to be implemented or imported from relevant crates
+fn dice_keypair_from_seed(
+    _context: Option<&mut ()>,
+    _seed: &[u8; DICE_PRIVATE_KEY_SEED_SIZE],
+    _private_key: &mut [u8; DICE_PRIVATE_KEY_SIZE],
+) -> Result<[u8; DICE_PUBLIC_KEY_SIZE], DiceResult> {
+    // Implement the keypair generation logic here.
+    Ok([0u8; DICE_PUBLIC_KEY_SIZE])
+}
+
+fn dice_derive_cdi_certificate_id(
+    _context: Option<&mut ()>,
+    _public_key: &[u8; DICE_PUBLIC_KEY_SIZE],
+) -> Result<[u8; DICE_ID_SIZE], DiceResult> {
+    // Implement the CDI certificate ID derivation logic here.
+    Ok([0u8; DICE_ID_SIZE])
+}
+
+fn dice_hash(
+    _input: &[u8],
+) -> [u8; DICE_HASH_SIZE] {
+    // Implement the hashing logic here.
+    [0u8; DICE_HASH_SIZE]
+}
+
+fn dice_sign(
+    _context: Option<&mut ()>,
+    _data: &[u8],
+    _private_key: &[u8; DICE_PRIVATE_KEY_SIZE],
+    _signature: &mut [u8; DICE_SIGNATURE_SIZE],
+) -> Result<(), DiceResult> {
+    // Implement the signing logic here.
+    Ok(())
+}
+
+fn main() -> Result<(), Box<dyn Error>> {
+    // Example usage of the dice_generate_certificate function
+    let context = None;
+    let subject_private_key_seed = [0u8; DICE_PRIVATE_KEY_SEED_SIZE];
+    let authority_private_key_seed = [0u8; DICE_PRIVATE_KEY_SEED_SIZE];
+    let input_values = DiceInputValues {
+        code_hash: [0u8; DICE_HASH_SIZE],
+        code_descriptor: None,
+        config_type: DiceConfigType::Inline,
+        config_value: [0u8; DICE_INLINE_CONFIG_SIZE],
+        config_descriptor: None,
+        authority_hash: [0u8; DICE_HASH_SIZE],
+        authority_descriptor: None,
+        mode: DiceMode::Normal,
+        hidden: [0u8; DICE_HIDDEN_SIZE],
+    };
+
+    let mut certificate_buffer = vec![0u8; 1024];
+    let certificate_size = dice_generate_certificate(
+        context,
+        &subject_private_key_seed,
+        &authority_private_key_seed,
+        &input_values,
+        &mut certificate_buffer,
+    )?;
+
+    println!("Generated certificate of size: {}", certificate_size);
+    Ok(())
+}
